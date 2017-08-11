@@ -422,6 +422,28 @@ static int tc358840_init_mode(struct tc_data *td,
 	return retval;
 }
 
+static int tc358840_init_mode_new(struct tc_data *td,
+		enum tc358840_frame_rate frame_rate,
+		enum tc358840_mode mode)
+{
+	struct sensor_data *sensor = &td->sensor;
+	int retval = 0;
+	void *mipi_csi2_info;
+	if(mode > tc358840_mode_1080p || mode < 0 ) {mode = tc358840_mode_unknown;}
+	/* initial mipi dphy */
+	tc358840_toggle_hpd(sensor, 0);
+	mipi_csi2_info = mipi_csi2_get_info();
+	if(!mipi_csi2_info) {return -1;}
+	tc358840_software_reset(sensor);
+	retval = mipi_reset(mipi_csi2_info, frame_rate, mode);
+	if(retval){return retval;}
+	retval = set_frame_rate_mode(td, frame_rate, mode);
+	if(retval){return retval;}
+	retval = mipi_wait(mipi_csi2_info);
+	if(td->hpd_active){tc358840_toggle_hpd(sensor, td->hpd_active);}
+	return retval;
+}
+
 static int tc358840_minit(struct tc_data *td)
 {
 	struct sensor_data *sensor = &td->sensor;

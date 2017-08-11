@@ -30,16 +30,13 @@ int get_reg_size(u16 reg, int len)
 	int size;
 	while (p->size) 
 	{
-		if ((p->startaddr <= reg) && (reg <= p->endaddr)) 
-		{
-			size = p->size;
-			if(len && (size != len)) {return 0;}
-				//pr_err("%s:reg len error:reg=%x %d instead of %d\n",__func__, reg, len, size);
-			if(reg % size) {return 0;}
+		if !((p->startaddr <= reg) && (reg <= p->endaddr)) {p++;continue;}
+		size = p->size;
+		if(len && (size != len)) {return 0;}
+			//pr_err("%s:reg len error:reg=%x %d instead of %d\n",__func__, reg, len, size);
+		if(reg % size) {return 0;}
 			//pr_err("%s:cannot read from the middle of a register, reg(%x) size(%d)\n",__func__, reg, size);
-			return size;
-		}
-		p++;
+		return size;
 	}
 	//pr_err("%s:reg=%x size is not defined\n",__func__, reg);
 	return 0;
@@ -170,15 +167,14 @@ int mipi_wait(void *mipi_csi2_info)
 
 
 /*Dependante to the chip low level functions*/
-
 static int tc_get_fps(struct sensor_data *sensor)
 {
 	u32 frame_interval;
 	int fps = 0;
 	frame_interval = (tc358840_read_reg_val(sensor, FV_CNT_HI) & 0x3) << 8;
 	frame_interval += tc358840_read_reg_val(sensor, FV_CNT_LO);
-	if(frame_interval > 0){fps = DIV_ROUND_CLOSEST(10000, frame_interval);}
-		//pr_debug("%s: frame_interval = %d*100us, fps = %d\n",__func__, frame_interval, fps);
+	fps = (frame_interval > 0)? DIV_ROUND_CLOSEST(10000, frame_interval):0;
+	pr_debug("%s: frame_interval = %d*100us, fps = %d\n",__func__, frame_interval, fps);
 	return fps;
 }
 
@@ -204,20 +200,15 @@ static s32 power_control(struct tc_data *td, int on)
 	int ret = 0;
 
 	pr_debug("%s: %d\n", __func__, on);
-	if (sensor->on == on) 
-	{
-		return ret;
-	}
+	if (sensor->on == on) {return ret;}
 	if (on) 
 	{
 		for (i = 0; i < REGULATOR_CNT; i++) 
 		{
-			if (td->regulator[i]) 
-			{
-				ret = regulator_enable(td->regulator[i]);
-				if (ret) {on = 0;break;}/* power all off */
-						//pr_err("%s:regulator_enable failed(%d)\n",__func__, ret);
-			}
+			if !(td->regulator[i]) {continue;}
+			ret = regulator_enable(td->regulator[i]);
+			if (ret) {on = 0;break;}/* power all off */
+				//pr_err("%s:regulator_enable failed(%d)\n",__func__, ret);
 		}
 	}
 	tc_standby(td, on ? 0 : 1);
@@ -240,7 +231,7 @@ static int tc358840_toggle_hpd(struct sensor_data *sensor, int active)
 	return ret;
 }
 
-static int get_format_index(enum tc358840_frame_rate frame_rate, enum tc358840_mode mode)
+static int get_format_index(enum tc358840_mode mode)
 {
 	int ifmt;
 	u32 flags = tc358840_mode_info_data[mode].flags;
@@ -252,10 +243,9 @@ static int get_format_index(enum tc358840_frame_rate frame_rate, enum tc358840_m
 	return -1;
 }
 
-static int get_pixelformat(enum tc358840_frame_rate frame_rate, enum tc358840_mode mode)
+static int get_pixelformat(enum tc358840_mode mode)
 {
-	int ifmt = get_format_index(frame_rate, mode);
-
+	int ifmt = get_format_index(mode);
 	if(ifmt < 0) {return 0;}
 		//pr_debug("%s: unsupported format, %d, %d\n", __func__, frame_rate, mode);
 	return tc358840_formats[ifmt].pixelformat;
@@ -334,11 +324,12 @@ int set_frame_rate_mode(struct tc_data *td,
 	register u32 Mask = 0, Val = 0;
 	u8  Length;
 	int retval = 0;
+	u32 RegVal=0;
 
 	pModeSetting =tc358840_mode_info_data[mode].init_data_ptr;
 	iModeSettingArySize =tc358840_mode_info_data[mode].init_data_size;
 
-	sensor->pix.pixelformat = get_pixelformat(frame_rate, mode);
+	sensor->pix.pixelformat = get_pixelformat(mode);
 	sensor->pix.width =tc358840_mode_info_data[mode].width;
 	sensor->pix.height =tc358840_mode_info_data[mode].height;
 	for (i = 0; i < iModeSettingArySize; ++i) 
@@ -351,13 +342,11 @@ int set_frame_rate_mode(struct tc_data *td,
 		Length = pModeSetting->u8Length;
 		if (Mask) 
 		{
-			u32 RegVal = 0;
-
+			RegVal = 0;
 			retval = tc358840_read_reg(sensor, RegAddr, &RegVal);
 			if(retval < 0) {return retval;}
 				//pr_err("%s: read failed, reg=0x%x\n", __func__, RegAddr);
-				
-			RegVal &= ~(u8)Mask;
+			RegVal &= ~(u8)Mask; /*Here legacy  bug*/ 
 			Val =(Val & Mask)|RegVal;
 		}
 
@@ -380,49 +369,14 @@ int set_frame_rate_mode(struct tc_data *td,
 	{
 		retval = tc358840_write_edid(sensor, cHDMIEDID, ARRAY_SIZE(cHDMIEDID));
 		(retval) ? pr_err("%s: Fail to write EDID(%d) to tc358840!\n", __func__, retval): td->edid_initialized = 1;
-	}*/
-	td->edid_initialized = 1;
+	}
+	td->edid_initialized = 1;*/
 	return retval;
 }
 
 
 
 static int tc358840_init_mode(struct tc_data *td,
-		enum tc358840_frame_rate frame_rate,
-		enum tc358840_mode mode)
-{
-	struct sensor_data *sensor = &td->sensor;
-	int retval = 0;
-	void *mipi_csi2_info;
-	//pr_debug("%s rate: %d mode: %d\n", __func__, frame_rate, mode);
-	if(mode > tc358840_mode_1080p || mode < 0 ) {mode = tc358840_mode_unknown;}
-		//pr_debug("%s Wrong tc358840 mode detected! %d. Set mode 0\n", __func__, mode);
-	/* initial mipi dphy */
-	tc358840_toggle_hpd(sensor, 0);
-	tc358840_software_reset(sensor);
-	mipi_csi2_info = mipi_csi2_get_info();
-		//pr_debug("%s rate: %d mode: %d, info %p\n", __func__, frame_rate, mode, mipi_csi2_info);
-	if(!mipi_csi2_info) {return -1;}
-		//pr_err("Fail to get mipi_csi2_info!\n");
-	retval = mipi_reset(mipi_csi2_info, frame_rate, tc358840_mode_unknown); //Here unexpected thing
-	if(retval) { return retval; }
-	retval = set_frame_rate_mode(td, frame_rate, tc358840_mode_unknown);
-	if (retval) { return retval; }
-	retval = mipi_wait(mipi_csi2_info);
-	if (mode != tc358840_mode_unknown) 
-	{
-		tc358840_software_reset(sensor);
-		retval = mipi_reset(mipi_csi2_info, frame_rate, mode);
-		if(retval){return retval;}
-		retval = set_frame_rate_mode(td, frame_rate, mode);
-		if(retval){return retval;}
-		retval = mipi_wait(mipi_csi2_info);
-	}
-	if(td->hpd_active){tc358840_toggle_hpd(sensor, td->hpd_active);}
-	return retval;
-}
-
-static int tc358840_init_mode_new(struct tc_data *td,
 		enum tc358840_frame_rate frame_rate,
 		enum tc358840_mode mode)
 {
@@ -448,7 +402,7 @@ static int tc358840_minit(struct tc_data *td)
 {
 	struct sensor_data *sensor = &td->sensor;
 	int ret;
-	enum tc358840_frame_rate frame_rate = tc358840_60_fps;
+	enum tc358840_frame_rate frame_rate = tc358840_50_fps;
 	u32 tgt_fps = sensor->streamcap.timeperframe.denominator / sensor->streamcap.timeperframe.numerator;
 	frame_rate = tc_fps_to_index(tgt_fps);
 	if(frame_rate < 0) {return -1;}
@@ -464,7 +418,7 @@ static int tc358840_reset(struct tc_data *td)
 	int loop = 0;
 	int ret;
 	det_work_enable(td, 0);
-	for (;;) 
+	for (loop;loop<3;loop++) 
 	{
 		//pr_debug("%s: RESET\n", __func__);
 		power_control(td, 0);
@@ -473,7 +427,6 @@ static int tc358840_reset(struct tc_data *td)
 		mdelay(1000);
 		ret = tc358840_minit(td);
 		if(!ret){break;}
-		if(loop++ >= 3) {break;}
 			//pr_err("%s:failed(%d)\n", __func__, ret);
 	}
 	det_work_enable(td, 1);

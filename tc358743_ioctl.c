@@ -5,17 +5,14 @@ static int ioctl_g_ifparm(struct v4l2_int_device *s, struct v4l2_ifparm *p)
 {
 	struct tc_data *td = s->priv;
 	struct sensor_data *sensor = &td->sensor;
-
-	pr_debug("%s\n", __func__);
-
 	memset(p, 0, sizeof(*p));
 	p->u.bt656.clock_curr = TC358743_XCLK_MIN; //sensor->mclk;
 	pr_debug("%s: clock_curr=mclk=%d\n", __func__, sensor->mclk);
+	pr_debug("%s\n", __func__);
 	p->if_type = V4L2_IF_TYPE_BT656;
 	p->u.bt656.mode = V4L2_IF_TYPE_BT656_MODE_NOBT_8BIT;
 	p->u.bt656.clock_min = TC358743_XCLK_MIN;
 	p->u.bt656.clock_max = TC358743_XCLK_MAX;
-
 	return 0;
 }
 
@@ -31,7 +28,6 @@ static int ioctl_s_power(struct v4l2_int_device *s, int on)
 {
 	struct tc_data *td = s->priv;
 	int ret;
-
 	mutex_lock(&td->access_lock);
 	ret =(on && !td->mode) ? tc358840_reset(td): power_control(td, on);
 	mutex_unlock(&td->access_lock);
@@ -99,7 +95,7 @@ static int ioctl_s_parm(struct v4l2_int_device *s, struct v4l2_streamparm *a)
 	struct sensor_data *sensor = &td->sensor;
 	struct v4l2_fract *timeperframe = &a->parm.capture.timeperframe;
 	u32 tgt_fps;	/* target frames per secound */
-	enum tc358840_frame_rate frame_rate = tc358840_60_fps, frame_rate_now = tc358840_60_fps;
+	enum tc358840_frame_rate frame_rate = tc358840_50_fps, frame_rate_now = tc358840_50_fps;
 	enum tc358840_mode mode;
 	int ret = 0;
 	pr_debug("%s\n", __func__);
@@ -107,7 +103,8 @@ static int ioctl_s_parm(struct v4l2_int_device *s, struct v4l2_streamparm *a)
 	det_work_enable(td, 0);
 	/* Make sure power on */
 	power_control(td, 1);
-	switch (a->type) {
+	switch (a->type) 
+	{
 	/* This is the only case currently handled. */
 	case V4L2_BUF_TYPE_VIDEO_CAPTURE:
 		/* Check that the new frame rate is allowed. */
@@ -117,18 +114,11 @@ static int ioctl_s_parm(struct v4l2_int_device *s, struct v4l2_streamparm *a)
 			timeperframe->numerator = 1;
 		}
 		tgt_fps = timeperframe->denominator /timeperframe->numerator;
-
-		if (tgt_fps > MAX_FPS) 
+		if (tgt_fps > MAX_FPS || tgt_fps < MIN_FPS) 
 		{
-			timeperframe->denominator = MAX_FPS;
+			timeperframe->denominator = (tgt_fps > MAX_FPS) ? MAX_FPS: MIN_FPS;
 			timeperframe->numerator = 1;
 		}
- 		else if (tgt_fps < MIN_FPS) 
-		{
-			timeperframe->denominator = MIN_FPS;
-			timeperframe->numerator = 1;
-		}
-
 		/* Actual frame rate we use */
 		tgt_fps = timeperframe->denominator /  timeperframe->numerator;
 		frame_rate = tc_fps_to_index(tgt_fps);
@@ -149,9 +139,7 @@ static int ioctl_s_parm(struct v4l2_int_device *s, struct v4l2_streamparm *a)
 		frame_rate_now = tc_fps_to_index(tgt_fps);
 		mode = td->mode;
 		if (IS_COLORBAR(mode)) 
-		{
-			mode = (u32)a->parm.capture.capturemode;
-		} 
+			{mode = (u32)a->parm.capture.capturemode;} 
 		else 
 		{
 			a->parm.capture.capturemode = mode;
@@ -160,27 +148,22 @@ static int ioctl_s_parm(struct v4l2_int_device *s, struct v4l2_streamparm *a)
 			timeperframe->numerator = 1;
 		}
 
-		if (frame_rate_now != frame_rate || sensor->streamcap.capturemode != mode ||
+		if !(frame_rate_now != frame_rate || sensor->streamcap.capturemode != mode ||
 		   sensor->streamcap.extendedmode != (u32)a->parm.capture.extendedmode) 
+			{pr_debug("%s: Keep current settings\n", __func__);break;}
+		if (mode != tc358840_mode_unknown) 
 		{
-			if (mode != tc358840_mode_unknown) 
-			{
-				sensor->streamcap.capturemode = mode;
+			sensor->streamcap.capturemode = mode;
 				sensor->streamcap.timeperframe = *timeperframe;
-				sensor->streamcap.extendedmode =(u32)a->parm.capture.extendedmode;
-				pr_debug("%s: capture mode: %d\n", __func__,mode);
-				ret = tc358840_init_mode(td, frame_rate, mode);
-			} 
-			else 
-			{
-				a->parm.capture.capturemode = sensor->streamcap.capturemode;
-				*timeperframe = sensor->streamcap.timeperframe;
-				a->parm.capture.extendedmode = sensor->streamcap.extendedmode;
-			}
+			sensor->streamcap.extendedmode =(u32)a->parm.capture.extendedmode;
+			pr_debug("%s: capture mode: %d\n", __func__,mode);
+			ret = tc358840_init_mode(td, frame_rate, mode);
 		} 
 		else 
 		{
-			pr_debug("%s: Keep current settings\n", __func__);
+			a->parm.capture.capturemode = sensor->streamcap.capturemode;
+			*timeperframe = sensor->streamcap.timeperframe;
+			a->parm.capture.extendedmode = sensor->streamcap.extendedmode;
 		}
 		break;
 
@@ -319,17 +302,14 @@ static int ioctl_enum_framesizes(struct v4l2_int_device *s,
 	struct tc_data *td = s->priv;
 	enum tc358840_mode query_mode= fsize->index;
 	enum tc358840_mode mode = td->mode;
-	if (IS_COLORBAR(mode)) 
+	if !(IS_COLORBAR(mode)) {if (query_mode){return -EINVAL;}}
+	else
 	{
 		if(query_mode > MAX_COLORBAR) {return -EINVAL;}
                 else { mode = query_mode;}
 	} 
-	else 
-	{
-		if (query_mode){return -EINVAL;}
-	}
 	pr_debug("%s, mode: %d\n", __func__, mode);
-	fsize->pixel_format = get_pixelformat(0, mode);
+	fsize->pixel_format = get_pixelformat(mode);
 	fsize->discrete.width =  tc358840_mode_info_data[mode].width;
 	fsize->discrete.height = tc358840_mode_info_data[mode].height;
 	pr_debug("%s %d:%d format: %x\n", __func__, fsize->discrete.width, fsize->discrete.height, fsize->pixel_format);
@@ -378,7 +358,7 @@ static int ioctl_enum_fmt_cap(struct v4l2_int_device *s,
 	if(!index){index = sensor->streamcap.capturemode;}
 	pr_debug("%s, INDEX: %d\n", __func__, index);
 	if(index > tc358840_mode_1080p){return -EINVAL;}
-	fmt->pixelformat = get_pixelformat(0, index);
+	fmt->pixelformat = get_pixelformat(index);
 	pr_debug("%s: format: %x\n", __func__, fmt->pixelformat);
 	return 0;
 }
@@ -406,7 +386,7 @@ static int ioctl_try_fmt_cap(struct v4l2_int_device *s,
 		goto out;
 	}
 	mode = sensor->streamcap.capturemode;
-	sensor->pix.pixelformat = get_pixelformat(frame_rate, mode);
+	sensor->pix.pixelformat = get_pixelformat(mode);
 	sensor->pix.width = pix->width = tc358840_mode_info_data[mode].width;
 	sensor->pix.height = pix->height = tc358840_mode_info_data[mode].height;
 	pr_debug("%s: %dx%d\n", __func__, sensor->pix.width, sensor->pix.height);
@@ -449,7 +429,7 @@ static int ioctl_g_fmt_cap(struct v4l2_int_device *s, struct v4l2_format *f)
 	struct tc_data *td = s->priv;
 	struct sensor_data *sensor = &td->sensor;
 	int mode = sensor->streamcap.capturemode;
-	sensor->pix.pixelformat = get_pixelformat(0, mode);
+	sensor->pix.pixelformat = get_pixelformat(mode);
 	sensor->pix.width = tc358840_mode_info_data[mode].width;
 	sensor->pix.height = tc358840_mode_info_data[mode].height;
 
@@ -489,14 +469,16 @@ static int ioctl_dev_init(struct v4l2_int_device *s)
 {
 	struct tc_data *td = s->priv;
 
-	if (td->det_changed) 
+	if !(td->det_changed) 
 	{
-		mutex_lock(&td->access_lock);
-		td->det_changed = 0;
 		pr_debug("%s\n", __func__);
-		tc358840_minit(td);
-		mutex_unlock(&td->access_lock);
+		return 0;
 	}
+	mutex_lock(&td->access_lock);
+	td->det_changed = 0;
+	pr_debug("%s\n", __func__);
+	tc358840_minit(td);
+	mutex_unlock(&td->access_lock);
 	pr_debug("%s\n", __func__);
 	return 0;
 }

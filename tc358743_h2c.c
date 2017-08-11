@@ -424,7 +424,7 @@ static int tc358840_probe(struct i2c_client *client,
 	sensor->streamcap.capturemode = mode;
 	sensor->streamcap.timeperframe.denominator = DEFAULT_FPS;
 	sensor->streamcap.timeperframe.numerator = 1;
-	sensor->pix.pixelformat = get_pixelformat(0, mode);
+	sensor->pix.pixelformat = get_pixelformat(mode);
 	sensor->pix.width = tc358840_mode_info_data[mode].width;
 	sensor->pix.height = tc358840_mode_info_data[mode].height;
 	/*sensor structure inited*/
